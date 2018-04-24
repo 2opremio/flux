@@ -33,6 +33,10 @@ jobs:
               docker login -u "$DOCKER_REGISTRY_USER" -p "$DOCKER_REGISTRY_PASSWORD" quay.io
               docker push "quay.io/weaveworks/flux:$(docker/image-tag)"
             fi
+            if echo "${CIRCLE_TAG}" | grep -Eq "helm-^[0-9]+(\.[0-9]+)*(-[a-z]+)?$"; then
+              docker login -u "$DOCKER_REGISTRY_USER" -p "$DOCKER_REGISTRY_PASSWORD" quay.io
+              docker push "quay.io/weaveworks/helm-operator:$(docker/image-tag | cut -c 5-)"
+            fi
 
 workflows:
   version: 2
@@ -40,5 +44,5 @@ workflows:
     jobs:
       - build:
           filters:
-            tags:  
+            tags:
               only: /[0-9]+(\.[0-9]+)*(-[a-z]+)?/
