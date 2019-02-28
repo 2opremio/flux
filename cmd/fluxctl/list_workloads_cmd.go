@@ -12,22 +12,22 @@ import (
 	"github.com/weaveworks/flux/policy"
 )
 
-type controllerListOpts struct {
+type workloadListOpts struct {
 	*rootOpts
 	namespace     string
 	allNamespaces bool
 }
 
-func newControllerList(parent *rootOpts) *controllerListOpts {
-	return &controllerListOpts{rootOpts: parent}
+func newWorkloadList(parent *rootOpts) *workloadListOpts {
+	return &workloadListOpts{rootOpts: parent}
 }
 
-func (opts *controllerListOpts) Command() *cobra.Command {
+func (opts *workloadListOpts) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "list-controllers",
-		Aliases: []string{"list-workloads"},
-		Short:   "List controllers currently running in the cluster.",
-		Example: makeExample("fluxctl list-controllers"),
+		Use:     "list-workloads",
+		Aliases: []string{"list-controllers"}, // Transient backwards compatibility after replacing controller by workload
+		Short:   "List workloads currently running in the cluster.",
+		Example: makeExample("fluxctl list-worloads"),
 		RunE:    opts.RunE,
 	}
 	cmd.Flags().StringVarP(&opts.namespace, "namespace", "n", "default", "Confine query to namespace")
@@ -35,7 +35,7 @@ func (opts *controllerListOpts) Command() *cobra.Command {
 	return cmd
 }
 
-func (opts *controllerListOpts) RunE(cmd *cobra.Command, args []string) error {
+func (opts *workloadListOpts) RunE(cmd *cobra.Command, args []string) error {
 	if len(args) != 0 {
 		return errorWantedNoArgs
 	}
@@ -46,45 +46,45 @@ func (opts *controllerListOpts) RunE(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 
-	controllers, err := opts.API.ListServices(ctx, opts.namespace)
+	workloads, err := opts.API.ListWorkloads(ctx, opts.namespace)
 	if err != nil {
 		return err
 	}
 
-	sort.Sort(controllerStatusByName(controllers))
+	sort.Sort(workloadStatusByName(workloads))
 
 	w := newTabwriter()
 	fmt.Fprintf(w, "CONTROLLER\tCONTAINER\tIMAGE\tRELEASE\tPOLICY\n")
-	for _, controller := range controllers {
-		if len(controller.Containers) > 0 {
-			c := controller.Containers[0]
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", controller.ID, c.Name, c.Current.ID, controller.Status, policies(controller))
-			for _, c := range controller.Containers[1:] {
+	for _, workload := range workloads {
+		if len(workload.Containers) > 0 {
+			c := workload.Containers[0]
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", workload.ID, c.Name, c.Current.ID, workload.Status, policies(workload))
+			for _, c := range workload.Containers[1:] {
 				fmt.Fprintf(w, "\t%s\t%s\t\t\n", c.Name, c.Current.ID)
 			}
 		} else {
-			fmt.Fprintf(w, "%s\t\t\t\t\n", controller.ID)
+			fmt.Fprintf(w, "%s\t\t\t\t\n", workload.ID)
 		}
 	}
 	w.Flush()
 	return nil
 }
 
-type controllerStatusByName []v6.ControllerStatus
+type workloadStatusByName []v6.WorkloadStatus
 
-func (s controllerStatusByName) Len() int {
+func (s workloadStatusByName) Len() int {
 	return len(s)
 }
 
-func (s controllerStatusByName) Less(a, b int) bool {
+func (s workloadStatusByName) Less(a, b int) bool {
 	return s[a].ID.String() < s[b].ID.String()
 }
 
-func (s controllerStatusByName) Swap(a, b int) {
+func (s workloadStatusByName) Swap(a, b int) {
 	s[a], s[b] = s[b], s[a]
 }
 
-func policies(s v6.ControllerStatus) string {
+func policies(s v6.WorkloadStatus) string {
 	var ps []string
 	if s.Automated {
 		ps = append(ps, string(policy.Automated))
