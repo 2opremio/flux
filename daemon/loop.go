@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/weaveworks/flux/git"
 	fluxmetrics "github.com/weaveworks/flux/metrics"
 	"github.com/weaveworks/flux/resource"
+	"github.com/weaveworks/flux/resourcestore"
 	fluxsync "github.com/weaveworks/flux/sync"
 	"github.com/weaveworks/flux/update"
 )
@@ -200,9 +202,17 @@ func (d *Daemon) doSync(logger log.Logger, lastKnownSyncTagRev *string, warnedAb
 	}
 
 	// Get a map of all resources defined in the repo
-	allResources, err := d.Manifests.LoadManifests(working.Dir(), working.ManifestDirs())
-	if err != nil {
+	errorf := func(err error) error {
 		return errors.Wrap(err, "loading resources from repo")
+	}
+	resourceStore, err := resourcestore.NewCheckoutManager(ctx, d.ManifestGenerationEnabled,
+		d.Manifests, d.PolicyTranslator, working)
+	if err != nil {
+		return errorf(err)
+	}
+	allResources, err := resourceStore.GetAllResourcesByID()
+	if err != nil {
+		return
 	}
 
 	var resourceErrors []event.ResourceError
@@ -241,23 +251,40 @@ func (d *Daemon) doSync(logger log.Logger, lastKnownSyncTagRev *string, warnedAb
 		}
 	}
 
-	// Figure out which workload IDs changed in this release
 	changedResources := map[string]resource.Resource{}
-
 	if initialSync {
 		// no synctag, We are syncing everything from scratch
 		changedResources = allResources
 	} else {
+		errorf := func(err error) error { return errors.Wrap(err, "loading resources from repo") }
 		ctx, cancel := context.WithTimeout(ctx, d.GitOpTimeout)
 		changedFiles, err := working.ChangedFiles(ctx, oldTagRev)
-		if err == nil && len(changedFiles) > 0 {
-			// We had some changed files, we're syncing a diff
-			// FIXME(michael): this won't be accurate when a file can have more than one resource
-			changedResources, err = d.Manifests.LoadManifests(working.Dir(), changedFiles)
-		}
 		cancel()
 		if err != nil {
-			return errors.Wrap(err, "loading resources from repo")
+			return errorf(err)
+		}
+		resourcesBySource, err := resourceStore.GetAllResourcesBySource()
+		if err != nil {
+			return errorf(err)
+		}
+		// FIXME(michael): this won't be accurate when a file can have more than one resource
+		for _, absolutePath := range changedFiles {
+			relPath, err := filepath.Rel(working.Dir(), absolutePath)
+			if err != nil {
+				return errorf(err)
+			}
+			if r, ok := resourcesBySource[relPath]; ok {
+				changedResources[r.ResourceID().String()] = r
+			}
+		}
+		// All resources generated from .flux.yaml files need to be considered as changed
+		// (even if the .flux.yaml file itself didn't) since external dependencies of the file
+		// (e.g. scripts invoked), which we cannot track, may have changed
+		for sourcePath, r := range resourcesBySource {
+			_, sourceFilename := filepath.Split(sourcePath)
+			if sourceFilename == resourcestore.ConfigFilename {
+				changedResources[r.ResourceID().String()] = r
+			}
 		}
 	}
 
