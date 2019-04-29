@@ -89,37 +89,53 @@ func (cf *ConfigFile) ExecGenerators(ctx context.Context) []ConfigFileExecResult
 	return result
 }
 
+type ManifestUpdate struct {
+	OriginalManifest, UpdatedManifest, StrategicMergePatch []byte
+}
+
 // ExecContainerImageUpdaters executes all the image updates in the configuration file.
 // It will stop at the first error, in which case the returned error will be non-nil
 func (cf *ConfigFile) ExecContainerImageUpdaters(ctx context.Context,
-	workload flux.ResourceID, container string, image, imageTag string) []ConfigFileCombinedExecResult {
+	workload flux.ResourceID, container string, image, imageTag string, mu ManifestUpdate) ([]ConfigFileCombinedExecResult, error) {
 	env := makeEnvFromResourceID(workload)
 	env = append(env,
 		"FLUX_CONTAINER="+container,
 		"FLUX_IMG="+image,
 		"FLUX_TAG="+imageTag,
 	)
+	updateEnv, cleanup, err := makeEnvFromManifestUpdate(mu)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	env = append(env, updateEnv...)
 	commands := []string{}
 	for _, u := range cf.Updaters {
 		commands = append(commands, u.ContainerImage.Command)
 	}
-	return cf.execCommandsWithCombinedOutput(ctx, env, commands)
+	return cf.execCommandsWithCombinedOutput(ctx, env, commands), nil
 }
 
 // ExecAnnotationUpdaters executes all the annotation updates in the configuration file.
 // It will stop at the first error, in which case the returned error will be non-nil
 func (cf *ConfigFile) ExecAnnotationUpdaters(ctx context.Context,
-	workload flux.ResourceID, annotationKey string, annotationValue *string) []ConfigFileCombinedExecResult {
+	workload flux.ResourceID, annotationKey string, annotationValue *string, mu ManifestUpdate) ([]ConfigFileCombinedExecResult, error) {
 	env := makeEnvFromResourceID(workload)
 	env = append(env, "FLUX_ANNOTATION_KEY="+annotationKey)
 	if annotationValue != nil {
 		env = append(env, "FLUX_ANNOTATION_VALUE="+*annotationValue)
 	}
+	updateEnv, cleanup, err := makeEnvFromManifestUpdate(mu)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	env = append(env, updateEnv...)
 	commands := []string{}
 	for _, u := range cf.Updaters {
 		commands = append(commands, u.Annotation.Command)
 	}
-	return cf.execCommandsWithCombinedOutput(ctx, env, commands)
+	return cf.execCommandsWithCombinedOutput(ctx, env, commands), nil
 }
 
 func (cf *ConfigFile) execCommandsWithCombinedOutput(ctx context.Context, env []string, commands []string) []ConfigFileCombinedExecResult {
@@ -166,4 +182,52 @@ func makeEnvFromResourceID(id flux.ResourceID) []string {
 		"FLUX_WL_KIND=" + kind,
 		"FLUX_WL_NAME=" + name,
 	}
+}
+
+func makeEnvFromManifestUpdate(mu ManifestUpdate) ([]string, func(), error) {
+	entries := []struct {
+		envPrefix string
+		content   []byte
+	}{
+
+		{
+			envPrefix: "FLUX_ORIGINAL_MANIFEST",
+			content:   mu.OriginalManifest,
+		},
+		{
+			envPrefix: "FLUX_UPDATED_MANIFEST",
+			content:   mu.UpdatedManifest,
+		},
+		{
+			envPrefix: "FLUX_MANIFEST_PATCH",
+			content:   mu.StrategicMergePatch,
+		},
+	}
+
+	var envs []string
+	var paths []string
+	for _, entry := range entries {
+		env := entry.envPrefix + "_PATH"
+		pattern := entry.envPrefix + "*" + ".yaml"
+		f, err := ioutil.TempFile(os.TempDir(), pattern)
+		if err != nil {
+			return nil, nil, fmt.Errorf("creating file for %s: %s", env, err)
+		}
+		if _, err := f.Write(entry.content); err != nil {
+			return nil, nil, fmt.Errorf("writing content to %s (%q): %s", env, f.Name(), err)
+		}
+		if err := f.Close(); err != nil {
+			return nil, nil, fmt.Errorf("closing file in %s (%q): %s", env, f.Name(), err)
+		}
+		paths = append(paths, f.Name())
+		envs = append(envs, env+"="+f.Name())
+	}
+
+	cleanup := func() {
+		for _, p := range paths {
+			os.Remove(p)
+		}
+	}
+
+	return envs, cleanup, nil
 }

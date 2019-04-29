@@ -128,3 +128,89 @@ metadata:
 	assert.NoError(t, err)
 	assert.Contains(t, savedLog, "cannot find scope of resource foo/fooinstance")
 }
+
+func TestCreateManifestPatchHelmRelease(t *testing.T) {
+	const (
+		originalManifest = `apiVersion: flux.weave.works/v1beta1
+kind: HelmRelease
+metadata:
+  name: ghost
+  namespace: demo
+  annotations:
+    flux.weave.works/automated: "false"
+    flux.weave.works/tag.chart-image: glob:1.21.*
+spec:
+  values:
+    image: bitnami/ghost
+    tag: 1.21.5-r0
+`
+		updatedManifest = `apiVersion: flux.weave.works/v1beta1
+kind: HelmRelease
+metadata:
+  name: ghost
+  namespace: demo
+  annotations:
+    flux.weave.works/automated: "false"
+    flux.weave.works/tag.chart-image: glob:1.21.*
+spec:
+  values:
+    image: bitnami/ghost
+    tag: 1.21.6
+`
+	)
+
+	coreClient := makeFakeClient()
+
+	nser, err := NewNamespacer(coreClient.Discovery())
+	assert.NoError(t, err)
+	manifests := NewManifests(nser, log.NewLogfmtLogger(os.Stderr))
+
+	_, err = manifests.CreateManifestPatch([]byte(originalManifest), []byte(updatedManifest))
+	assert.NoError(t, err)
+}
+
+func TestCreateManifestPatchDeployment(t *testing.T) {
+	const (
+		originalManifest = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: name
+spec:
+  template:
+    spec:
+      containers:
+      - name: one
+        image: one:one
+      - name: two
+        image: two:two
+      initContainers:
+      - name: one
+        image: one:one
+`
+		updatedManifest = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: name
+spec:
+  template:
+    spec:
+      containers:
+      - name: one
+        image: oneplus:oneplus
+      - name: two
+        image: two:two
+      initContainers:
+      - name: one
+        image: one:one
+`
+	)
+
+	coreClient := makeFakeClient()
+
+	nser, err := NewNamespacer(coreClient.Discovery())
+	assert.NoError(t, err)
+	manifests := NewManifests(nser, log.NewLogfmtLogger(os.Stderr))
+
+	_, err = manifests.CreateManifestPatch([]byte(originalManifest), []byte(updatedManifest))
+	assert.NoError(t, err)
+}

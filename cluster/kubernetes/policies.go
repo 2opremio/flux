@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pkg/errors"
 
@@ -13,6 +14,8 @@ import (
 )
 
 type PolicyTranslator struct{}
+
+var _ cluster.PolicyTranslator = &PolicyTranslator{}
 
 func (pt *PolicyTranslator) GetAnnotationChangesForPolicyUpdate(workload resource.Workload, update policy.Update) ([]cluster.AnnotationChange, error) {
 	add, del := update.Add, update.Remove
@@ -42,6 +45,20 @@ func (pt *PolicyTranslator) GetAnnotationChangesForPolicyUpdate(workload resourc
 		result = append(result, cluster.AnnotationChange{kresource.PolicyPrefix + string(pol), nil})
 	}
 	return result, nil
+}
+
+func (pt *PolicyTranslator) GetPolicyUpdateForAnnotationChange(change cluster.AnnotationChange) (policy.Update, error) {
+	p := policy.Policy(strings.TrimPrefix(kresource.PolicyPrefix, change.AnnotationKey))
+	if change.AnnotationValue != nil {
+		update := policy.Update{
+			Add: policy.Set{p: *change.AnnotationValue},
+		}
+		return update, nil
+	}
+	update := policy.Update{
+		Remove: policy.Set{p: *change.AnnotationValue},
+	}
+	return update, nil
 }
 
 func (m *manifests) UpdateWorkloadPolicies(def []byte, id flux.ResourceID, update policy.Update) ([]byte, error) {

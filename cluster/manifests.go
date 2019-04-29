@@ -18,6 +18,9 @@ type Manifests interface {
 	LoadManifests(baseDir string, paths []string) (map[string]resource.Resource, error)
 	// ParseManifest parses the content of a manifest and its source location into resources
 	ParseManifest(def []byte, source string) (map[string]resource.Resource, error)
+	// CreateManifestPatch obtains the (cluster-technology-specific) difference between the `original` manifest
+	// and the `updated` manifest
+	CreateManifestPatch(original, updated []byte) ([]byte, error)
 	// Set the image of a container in a manifest's bytes to that given
 	SetWorkloadContainerImage(def []byte, resourceID flux.ResourceID, container string, newImageID image.Ref) ([]byte, error)
 	// UpdatWorkloadPolicies modifies a manifest to apply the policy update specified

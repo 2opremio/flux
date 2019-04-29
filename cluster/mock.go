@@ -20,6 +20,7 @@ type Mock struct {
 	SetWorkloadContainerImageFunc func(def []byte, id flux.ResourceID, container string, newImageID image.Ref) ([]byte, error)
 	LoadManifestsFunc             func(base string, paths []string) (map[string]resource.Resource, error)
 	ParseManifestFunc             func(def []byte, source string) (map[string]resource.Resource, error)
+	CreateManifestPatchFunc       func(original, updated []byte) ([]byte, error)
 	UpdateWorkloadPoliciesFunc    func([]byte, flux.ResourceID, policy.Update) ([]byte, error)
 }
 
@@ -64,6 +65,10 @@ func (m *Mock) LoadManifests(baseDir string, paths []string) (map[string]resourc
 
 func (m *Mock) ParseManifest(def []byte, source string) (map[string]resource.Resource, error) {
 	return m.ParseManifestFunc(def, source)
+}
+
+func (m *Mock) CreateManifestPatch(original, updated []byte) ([]byte, error) {
+	return m.CreateManifestPatchFunc(original, updated)
 }
 
 func (m *Mock) UpdateWorkloadPolicies(def []byte, id flux.ResourceID, p policy.Update) ([]byte, error) {

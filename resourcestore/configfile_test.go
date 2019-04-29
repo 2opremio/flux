@@ -24,6 +24,10 @@ updaters:
       command: echo uci2 $FLUX_WORKLOAD $FLUX_WL_NS $FLUX_WL_KIND $FLUX_WL_NAME $FLUX_CONTAINER $FLUX_IMG $FLUX_TAG
     annotation:
       command: echo ua2 $FLUX_WORKLOAD $FLUX_WL_NS $FLUX_WL_KIND $FLUX_WL_NAME $FLUX_ANNOTATION_KEY ${FLUX_ANNOTATION_VALUE:-delete}
+  - containerImage:
+      command: echo uci3 $(cat $FLUX_ORIGINAL_MANIFEST_PATH) $(cat $FLUX_UPDATED_MANIFEST_PATH) $(cat $FLUX_MANIFEST_PATCH_PATH)
+    annotation:
+      command: echo ua3 $(cat $FLUX_ORIGINAL_MANIFEST_PATH) $(cat $FLUX_UPDATED_MANIFEST_PATH) $(cat $FLUX_MANIFEST_PATCH_PATH)
 `
 
 func TestParseConfigFile(t *testing.T) {
@@ -33,7 +37,7 @@ func TestParseConfigFile(t *testing.T) {
 	}
 	assert.Equal(t, "1", cf.Version)
 	assert.Equal(t, 2, len(cf.Generators))
-	assert.Equal(t, 2, len(cf.Updaters))
+	assert.Equal(t, 3, len(cf.Updaters))
 	assert.Equal(t,
 		"echo uci1 $FLUX_WORKLOAD $FLUX_WL_NS $FLUX_WL_KIND $FLUX_WL_NAME $FLUX_CONTAINER $FLUX_IMG $FLUX_TAG",
 		cf.Updaters[0].ContainerImage.Command,
@@ -41,6 +45,10 @@ func TestParseConfigFile(t *testing.T) {
 	assert.Equal(t,
 		"echo ua2 $FLUX_WORKLOAD $FLUX_WL_NS $FLUX_WL_KIND $FLUX_WL_NAME $FLUX_ANNOTATION_KEY ${FLUX_ANNOTATION_VALUE:-delete}",
 		cf.Updaters[1].Annotation.Command,
+	)
+	assert.Equal(t,
+		"echo uci3 $(cat $FLUX_ORIGINAL_MANIFEST_PATH) $(cat $FLUX_UPDATED_MANIFEST_PATH) $(cat $FLUX_MANIFEST_PATCH_PATH)",
+		cf.Updaters[2].ContainerImage.Command,
 	)
 }
 
@@ -59,14 +67,23 @@ func TestExecContainerImageUpdaters(t *testing.T) {
 	err := yaml.Unmarshal([]byte(echoConfigFile), &cf)
 	assert.NoError(t, err)
 	resourceID := flux.MustParseResourceID("default:deployment/foo")
-	result := cf.ExecContainerImageUpdaters(context.Background(), resourceID, "bar", "repo/image", "latest")
-	assert.Equal(t, 2, len(result), "result: %s", result)
+	mockUpdate := ManifestUpdate{
+		OriginalManifest:    []byte("foo"),
+		UpdatedManifest:     []byte("bar"),
+		StrategicMergePatch: []byte("baz"),
+	}
+	result, err := cf.ExecContainerImageUpdaters(context.Background(), resourceID, "bar", "repo/image", "latest", mockUpdate)
+	assert.NoError(t, err)
+	assert.Equal(t, 3, len(result), "result: %s", result)
 	assert.Equal(t,
 		"uci1 default:deployment/foo default deployment foo bar repo/image latest\n",
 		string(result[0].Output))
 	assert.Equal(t,
 		"uci2 default:deployment/foo default deployment foo bar repo/image latest\n",
 		string(result[1].Output))
+	assert.Equal(t,
+		"uci3 foo bar baz\n",
+		string(result[2].Output))
 }
 
 func TestExecAnnotationUpdaters(t *testing.T) {
@@ -74,21 +91,31 @@ func TestExecAnnotationUpdaters(t *testing.T) {
 	err := yaml.Unmarshal([]byte(echoConfigFile), &cf)
 	assert.NoError(t, err)
 	resourceID := flux.MustParseResourceID("default:deployment/foo")
+	mockUpdate := ManifestUpdate{
+		OriginalManifest:    []byte("foo"),
+		UpdatedManifest:     []byte("bar"),
+		StrategicMergePatch: []byte("baz"),
+	}
 
 	// Test the update/addition of annotations
 	annotationValue := "value"
-	result := cf.ExecAnnotationUpdaters(context.Background(), resourceID, "key", &annotationValue)
-	assert.Equal(t, 2, len(result), "result: %s", result)
+	result, err := cf.ExecAnnotationUpdaters(context.Background(), resourceID, "key", &annotationValue, mockUpdate)
+	assert.NoError(t, err)
+	assert.Equal(t, 3, len(result), "result: %s", result)
 	assert.Equal(t,
 		"ua1 default:deployment/foo default deployment foo key value\n",
 		string(result[0].Output))
 	assert.Equal(t,
 		"ua2 default:deployment/foo default deployment foo key value\n",
 		string(result[1].Output))
+	assert.Equal(t,
+		"ua3 foo bar baz\n",
+		string(result[2].Output))
 
-	// Test the deletion of annotations "
-	result = cf.ExecAnnotationUpdaters(context.Background(), resourceID, "key", nil)
-	assert.Equal(t, 2, len(result), "result: %s", result)
+	// Test the deletion of annotations
+	result, err = cf.ExecAnnotationUpdaters(context.Background(), resourceID, "key", nil, mockUpdate)
+	assert.NoError(t, err)
+	assert.Equal(t, 3, len(result), "result: %s", result)
 	assert.Equal(t,
 		"ua1 default:deployment/foo default deployment foo key delete\n",
 		string(result[0].Output))

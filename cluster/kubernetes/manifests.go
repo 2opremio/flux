@@ -4,17 +4,30 @@ import (
 	"fmt"
 	"strings"
 
+	jsonyaml "github.com/ghodss/yaml"
 	"github.com/go-kit/kit/log"
 	"gopkg.in/yaml.v2"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	k8sscheme "k8s.io/client-go/kubernetes/scheme"
 
 	"github.com/weaveworks/flux"
 	"github.com/weaveworks/flux/cluster"
 	kresource "github.com/weaveworks/flux/cluster/kubernetes/resource"
 	"github.com/weaveworks/flux/image"
+	fluxscheme "github.com/weaveworks/flux/integrations/client/clientset/versioned/scheme"
 	"github.com/weaveworks/flux/resource"
 )
+
+var fullScheme = runtime.NewScheme()
+
+func init() {
+	utilruntime.Must(k8sscheme.AddToScheme(fullScheme))
+	utilruntime.Must(fluxscheme.AddToScheme(fullScheme))
+}
 
 // ResourceScopes maps resource definitions (GroupVersionKind) to whether they are namespaced or not
 type ResourceScopes map[schema.GroupVersionKind]v1beta1.ResourceScope
@@ -116,6 +129,46 @@ func (m *manifests) LoadManifests(baseDir string, paths []string) (map[string]re
 		return nil, err
 	}
 	return m.setEffectiveNamespaces(manifests)
+}
+
+func (m *manifests) CreateManifestPatch(original, updated []byte) ([]byte, error) {
+	resources, err := kresource.ParseMultidoc(original, "patch_creation")
+	if err != nil {
+		return nil, err
+	}
+	if len(resources) != 1 {
+		return nil, fmt.Errorf("expected one workload, got %d", len(resources))
+	}
+	var manifest kresource.KubeManifest
+	for _, v := range resources {
+		manifest = v
+	}
+	groupVersion, err := schema.ParseGroupVersion(manifest.GroupVersion())
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse groupVersion %q: %s", manifest.GroupVersion(), err)
+	}
+	gvk := groupVersion.WithKind(manifest.GetKind())
+	obj, err := fullScheme.New(gvk)
+	if err != nil {
+		return nil, fmt.Errorf("cannot obtain scheme for gvk %q: %s", gvk, err)
+	}
+	originalJSON, err := jsonyaml.YAMLToJSON(original)
+	if err != nil {
+		return nil, fmt.Errorf("cannot transform original resource to JSON: %s", err)
+	}
+	updatedJSON, err := jsonyaml.YAMLToJSON(updated)
+	if err != nil {
+		return nil, fmt.Errorf("cannot transform updated resource to JSON: %s", err)
+	}
+	smpJSON, err := strategicpatch.CreateTwoWayMergePatch(originalJSON, updatedJSON, obj)
+	if err != nil {
+		return nil, err
+	}
+	smp, err := jsonyaml.JSONToYAML(smpJSON)
+	if err != nil {
+		return nil, fmt.Errorf("cannot transform updated patch to YAML: %s", err)
+	}
+	return smp, nil
 }
 
 func (m *manifests) ParseManifest(def []byte, source string) (map[string]resource.Resource, error) {

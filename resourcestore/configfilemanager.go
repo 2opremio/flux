@@ -47,8 +47,10 @@ func (cfm *configFileManager) GetAllResources() ([]updatableResource, error) {
 		}
 		for _, r := range resources {
 			g := &generatedResource{
-				Resource: r,
-				manager:  cfm,
+				Resource:         r,
+				manager:          cfm,
+				manifests:        cfm.manifests,
+				policyTranslator: cfm.policyTranslator,
 			}
 			result = append(result, g)
 		}
@@ -58,17 +60,32 @@ func (cfm *configFileManager) GetAllResources() ([]updatableResource, error) {
 
 type generatedResource struct {
 	resource.Resource
-	manager *configFileManager
+	manager          *configFileManager
+	manifests        cluster.Manifests
+	policyTranslator cluster.PolicyTranslator
 }
 
 var _ updatableResource = &generatedResource{}
 
 func (gr *generatedResource) SetWorkloadContainerImage(container string, newImageID image.Ref) error {
-	result := gr.manager.configFile.ExecContainerImageUpdaters(gr.manager.ctx,
+	mu, err := gr.getSetWorkloadContainerImageMU(container, newImageID)
+	if err != nil {
+		return fmt.Errorf("error obtaining manifest update context (workload=%s, container=%s, image=%s): %s",
+			gr.ResourceID(),
+			container,
+			newImageID,
+			err,
+		)
+	}
+	result, err := gr.manager.configFile.ExecContainerImageUpdaters(gr.manager.ctx,
 		gr.ResourceID(),
 		container,
 		newImageID.Name.String(), newImageID.Tag,
+		mu,
 	)
+	if err != nil {
+		return fmt.Errorf("error executing image updaters from file %q: %s", gr.Source(), err)
+	}
 	if len(result) > 0 && result[len(result)-1].Error != nil {
 		return fmt.Errorf("error executing image updater command %q from file %q: %s\noutput:\n%s",
 			gr.manager.configFile.Updaters[len(result)-1].ContainerImage.Command,
@@ -78,6 +95,24 @@ func (gr *generatedResource) SetWorkloadContainerImage(container string, newImag
 		)
 	}
 	return nil
+}
+
+func (gr *generatedResource) getSetWorkloadContainerImageMU(container string, newImageID image.Ref) (ManifestUpdate, error) {
+	original := gr.Bytes()
+	updated, err := gr.manifests.SetWorkloadContainerImage(original, gr.ResourceID(), container, newImageID)
+	if err != nil {
+		return ManifestUpdate{}, fmt.Errorf("cannot update manifest: %s", err)
+	}
+	patch, err := gr.manifests.CreateManifestPatch(original, updated)
+	if err != nil {
+		return ManifestUpdate{}, fmt.Errorf("cannot create patch: %s", err)
+	}
+	mu := ManifestUpdate{
+		OriginalManifest:    original,
+		UpdatedManifest:     updated,
+		StrategicMergePatch: patch,
+	}
+	return mu, nil
 }
 
 func (gr *generatedResource) UpdateWorkloadPolicies(update policy.Update) (bool, error) {
@@ -90,11 +125,23 @@ func (gr *generatedResource) UpdateWorkloadPolicies(update policy.Update) (bool,
 		return false, err
 	}
 	for _, change := range changes {
-		result := gr.manager.configFile.ExecAnnotationUpdaters(gr.manager.ctx,
+		mu, err := gr.getUpdateWorkloadPoliciesMU(change)
+		if err != nil {
+			return false, fmt.Errorf("error obtaining manifest update context (workload=%s, annotation=%s): %s",
+				gr.ResourceID(),
+				change,
+				err,
+			)
+		}
+		result, err := gr.manager.configFile.ExecAnnotationUpdaters(gr.manager.ctx,
 			gr.ResourceID(),
 			change.AnnotationKey,
 			change.AnnotationValue,
+			mu,
 		)
+		if err != nil {
+			return false, fmt.Errorf("error executing image updaters from file %q: %s", gr.Source(), err)
+		}
 		if len(result) > 0 && result[len(result)-1].Error != nil {
 			err := fmt.Errorf("error executing annotation updater command %q from file %q: %s\noutput:\n%s",
 				gr.manager.configFile.Updaters[len(result)-1].Annotation.Command,
@@ -108,6 +155,30 @@ func (gr *generatedResource) UpdateWorkloadPolicies(update policy.Update) (bool,
 	// We assume that the update changed the resource. Alternatively, we could generate the resources
 	// again and compare the output, but that's expensive.
 	return true, nil
+}
+
+func (gr *generatedResource) getUpdateWorkloadPoliciesMU(change cluster.AnnotationChange) (ManifestUpdate, error) {
+	original := gr.Bytes()
+	// TODO(fons): Translating back to policy is really ugly, but I don't see a better alternative
+	//             if we want to reuse the Manifests interface
+	policyUpdate, err := gr.policyTranslator.GetPolicyUpdateForAnnotationChange(change)
+	if err != nil {
+		return ManifestUpdate{}, err
+	}
+	updated, err := gr.manifests.UpdateWorkloadPolicies(original, gr.ResourceID(), policyUpdate)
+	if err != nil {
+		return ManifestUpdate{}, fmt.Errorf("cannot update manifest: %s", err)
+	}
+	patch, err := gr.manifests.CreateManifestPatch(original, updated)
+	if err != nil {
+		return ManifestUpdate{}, fmt.Errorf("cannot create patch: %s", err)
+	}
+	mu := ManifestUpdate{
+		OriginalManifest:    original,
+		UpdatedManifest:     updated,
+		StrategicMergePatch: patch,
+	}
+	return mu, nil
 }
 
 func (gr *generatedResource) GetResource() resource.Resource {
