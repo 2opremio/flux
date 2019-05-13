@@ -451,7 +451,7 @@ func (d *Daemon) updatePolicies(spec update.Spec, updates policy.Updates) update
 			Author:  commitAuthor,
 			Message: policyCommitMessage(updates, spec.Cause),
 		}
-		if err := working.CommitAndPush(ctx, commitAction, &note{JobID: jobID, Spec: spec}); err != nil {
+		if err := working.AddCommitAndPush(ctx, commitAction, &note{JobID: jobID, Spec: spec}); err != nil {
 			// On the chance pushing failed because it was not
 			// possible to fast-forward, ask for a sync so the
 			// next attempt is more likely to succeed.
@@ -499,7 +499,7 @@ func (d *Daemon) release(spec update.Spec, c release.Changes) updateFunc {
 				Author:  commitAuthor,
 				Message: commitMsg,
 			}
-			if err := working.CommitAndPush(ctx, commitAction, &note{JobID: jobID, Spec: spec, Result: result}); err != nil {
+			if err := working.AddCommitAndPush(ctx, commitAction, &note{JobID: jobID, Spec: spec, Result: result}); err != nil {
 				// On the chance pushing failed because it was not
 				// possible to fast-forward, ask the repo to fetch
 				// from upstream ASAP, so the next attempt is more

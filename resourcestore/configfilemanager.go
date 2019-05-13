@@ -228,12 +228,7 @@ func (pur *patchUpdatedResource) updatePatchFile(updateF func(previousManifests 
 	if err != nil {
 		return err
 	}
-	err = ioutil.WriteFile(patchFilePath, newPatch, 0600)
-	if err != nil {
-		return err
-	}
-	// We need to add the file to Git in case it's the first time there is a modification
-	return pur.cfm.checkout.Add(pur.cfm.ctx, patchFilePath)
+	return ioutil.WriteFile(patchFilePath, newPatch, 0600)
 }
 
 var _ updatableResource = &patchUpdatedResource{}

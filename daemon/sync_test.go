@@ -272,7 +272,7 @@ func TestDoSync_WithNewCommit(t *testing.T) {
 		}
 
 		commitAction := git.CommitAction{Author: "", Message: "test commit"}
-		err = checkout.CommitAndPush(ctx, commitAction, nil)
+		err = checkout.AddCommitAndPush(ctx, commitAction, nil)
 		if err != nil {
 			return err
 		}
