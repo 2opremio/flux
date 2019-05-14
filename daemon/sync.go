@@ -181,10 +181,16 @@ func getChangedResources(ctx context.Context, c changeSet, timeout time.Duration
 		return nil, errorf(err)
 	}
 	cancel()
-	resourcesBySource, err := resourceStore.GetAllResourcesBySource()
+	// Get the resources by source
+	resourcesByID, err := resourceStore.GetAllResourcesByID()
 	if err != nil {
 		return nil, errorf(err)
 	}
+	resourcesBySource := make(map[string]resource.Resource, len(resourcesByID))
+	for _, r := range resourcesByID {
+		resourcesBySource[r.Source()] = r
+	}
+
 	changedResources := map[string]resource.Resource{}
 	// FIXME(michael): this won't be accurate when a file can have more than one resource
 	for _, absolutePath := range changedFiles {
