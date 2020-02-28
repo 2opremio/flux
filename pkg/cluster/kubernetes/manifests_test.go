@@ -15,7 +15,7 @@ import (
 )
 
 func TestLocalCRDScope(t *testing.T) {
-	nser, err := newNamespacer("", &mockScoper{})
+	nser, err := newNamespacer("", &mockResourceInfoProvider{})
 	assert.NoError(t, err)
 	manifests := NewManifests(nser, log.NewLogfmtLogger(os.Stdout))
 
@@ -60,8 +60,12 @@ metadata:
 }
 
 func TestUnKnownCRDScope(t *testing.T) {
-	scoper := &mockScoper{}
-	nser, err := newNamespacer("", scoper)
+	infoProvider := &mockResourceInfoProvider{
+		isNamespaced: map[schema.GroupKind]bool{
+			{"", "Namespace"}: false,
+		},
+	}
+	nser, err := newNamespacer("", infoProvider)
 	assert.NoError(t, err)
 	logBuffer := bytes.NewBuffer(nil)
 	manifests := NewManifests(nser, log.NewLogfmtLogger(logBuffer))
@@ -103,7 +107,7 @@ metadata:
 	assert.Equal(t, logBuffer.String(), savedLog)
 
 	// But getting the scope of the CRD should result in a log saying we found the scope
-	scoper.namespacedGroupKinds = []schema.GroupKind{{"foo.example.com", "Foo"}}
+	infoProvider.isNamespaced[schema.GroupKind{"foo.example.com", "Foo"}] = true
 
 	logBuffer.Reset()
 	resources, err = manifests.LoadManifests(dir, []string{dir})
@@ -112,7 +116,7 @@ metadata:
 	assert.Contains(t, logBuffer.String(), "found scope of resource bar:foo/fooinstance")
 
 	// and missing the scope information again should result in another warning
-	scoper.namespacedGroupKinds = nil
+	delete(infoProvider.isNamespaced, schema.GroupKind{"foo.example.com", "Foo"})
 	logBuffer.Reset()
 	resources, err = manifests.LoadManifests(dir, []string{dir})
 	assert.NoError(t, err)

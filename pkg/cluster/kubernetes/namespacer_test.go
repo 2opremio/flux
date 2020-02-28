@@ -1,34 +1,34 @@
 package kubernetes
 
 import (
+	"errors"
 	"io/ioutil"
 	"os"
 	"testing"
 
+	"github.com/argoproj/argo-cd/engine/pkg/utils/kube"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	kresource "github.com/fluxcd/flux/pkg/cluster/kubernetes/resource"
 )
 
-type mockScoper struct {
-	namespacedGroupKinds []schema.GroupKind
+type mockResourceInfoProvider struct {
+	isNamespaced map[schema.GroupKind]bool
 }
 
-func (m *mockScoper) IsNamespaced(gk schema.GroupKind) bool {
-	for _, namespacedGK := range m.namespacedGroupKinds {
-		if gk == namespacedGK {
-			return true
-		}
+func (m *mockResourceInfoProvider) IsNamespaced(gk schema.GroupKind) (bool, error) {
+	if namespaced, ok := m.isNamespaced[gk]; ok {
+		return namespaced, nil
 	}
-	return false
+	return false, errors.New("not found")
 }
 
-func newNamespacer(defaultNamespace string, scoper scoper) (*namespacerViaScoper, error) {
+func newNamespacer(defaultNamespace string, scoper kube.ResourceInfoProvider) (*namespacerViaInfoProvider, error) {
 	fallbackNamespace, err := getFallbackNamespace(defaultNamespace)
 	if err != nil {
 		return nil, err
 	}
-	return &namespacerViaScoper{scoper: scoper, fallbackNamespace: fallbackNamespace}, nil
+	return &namespacerViaInfoProvider{infoProvider: scoper, fallbackNamespace: fallbackNamespace}, nil
 }
 
 func TestNamespaceDefaulting(t *testing.T) {
@@ -86,12 +86,12 @@ metadata:
 		t.Fatal(err)
 	}
 
-	scoper := &mockScoper{[]schema.GroupKind{{"apps", "Deployment"}}}
+	scoper := &mockResourceInfoProvider{map[schema.GroupKind]bool{{"apps", "Deployment"}: true}}
 	defaultNser, err := newNamespacer("", scoper)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEffectiveNamespace := func(nser namespacerViaScoper, id, expected string) {
+	assertEffectiveNamespace := func(nser namespacerViaInfoProvider, id, expected string) {
 		res, ok := manifests[id]
 		if !ok {
 			t.Errorf("manifest for %q not found", id)

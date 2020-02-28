@@ -144,6 +144,7 @@ func NewCluster(config *rest.Config, defaultNamespace string, client ExtendedCli
 	c := &Cluster{
 		fallbackNamespace: fallbackNamespace,
 		engine:            engine.NewEngine(config, clusterCache),
+		clusterCache:      clusterCache,
 		client:            client,
 		logger:            logger,
 		sshKeyRing:        sshKeyRing,
@@ -171,7 +172,7 @@ func NewCluster(config *rest.Config, defaultNamespace string, client ExtendedCli
 }
 
 func (c *Cluster) Namespacer() namespacer {
-	return &namespacerViaScoper{fallbackNamespace: c.fallbackNamespace, scoper: c.clusterCache}
+	return &namespacerViaInfoProvider{fallbackNamespace: c.fallbackNamespace, infoProvider: c.clusterCache}
 }
 
 // --- cluster.Cluster

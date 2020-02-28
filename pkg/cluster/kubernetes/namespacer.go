@@ -15,9 +15,9 @@ import (
 // namespace.
 const defaultFallbackNamespace = "default"
 
-type namespacerViaScoper struct {
+type namespacerViaInfoProvider struct {
 	fallbackNamespace string
-	scoper            kube.ResourceInfoProvider
+	infoProvider      kube.ResourceInfoProvider
 }
 
 // If not empty `defaultNamespaceOverride` is used as the namespace when
@@ -61,7 +61,7 @@ var getKubeconfigDefaultNamespace = func() (string, error) {
 // effectiveNamespace yields the namespace that would be used for this
 // resource were it applied, taking into account the kind of the
 // resource, and local configuration.
-func (n *namespacerViaScoper) EffectiveNamespace(m kresource.KubeManifest, knownScopes ResourceScopes) (string, error) {
+func (n *namespacerViaInfoProvider) EffectiveNamespace(m kresource.KubeManifest, knownScopes ResourceScopes) (string, error) {
 	namespaced, err := n.lookupNamespaced(m.GroupVersion(), m.GetKind(), knownScopes)
 	switch {
 	case err != nil:
@@ -74,7 +74,7 @@ func (n *namespacerViaScoper) EffectiveNamespace(m kresource.KubeManifest, known
 	return m.GetNamespace(), nil
 }
 
-func (n *namespacerViaScoper) lookupNamespaced(groupVersion string, kind string, knownScopes ResourceScopes) (bool, error) {
+func (n *namespacerViaInfoProvider) lookupNamespaced(groupVersion string, kind string, knownScopes ResourceScopes) (bool, error) {
 	namespaced, clusterErr := n.lookupNamespacedInCluster(groupVersion, kind)
 	// FIXME: this doesn't work as it should since lookupNamespacedInCluster() doesn't return
 	//        an error if the resource doesn't exist
@@ -93,7 +93,7 @@ func (n *namespacerViaScoper) lookupNamespaced(groupVersion string, kind string,
 	return scope == v1beta1.NamespaceScoped, nil
 }
 
-func (n *namespacerViaScoper) lookupNamespacedInCluster(groupVersion, kind string) (bool, error) {
+func (n *namespacerViaInfoProvider) lookupNamespacedInCluster(groupVersion, kind string) (bool, error) {
 	gv, err := schema.ParseGroupVersion(groupVersion)
 	if err != nil {
 		return false, err
@@ -102,5 +102,5 @@ func (n *namespacerViaScoper) lookupNamespacedInCluster(groupVersion, kind strin
 		Group: gv.Group,
 		Kind:  kind,
 	}
-	return n.scoper.IsNamespaced(vk), nil
+	return n.infoProvider.IsNamespaced(vk)
 }
