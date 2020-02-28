@@ -109,10 +109,10 @@ github.com/alecthomas/units v0.0.0-20190717042225-c3de453c63f4/go.mod h1:ybxpYRF
 github.com/anmitsu/go-shlex v0.0.0-20161002113705-648efa622239 h1:kFOfPq6dUM1hTo4JG6LR5AXSUEsOjtdm0kw0FtQtMJA=
 github.com/anmitsu/go-shlex v0.0.0-20161002113705-648efa622239/go.mod h1:2FmKhYUyUczH0OGQWaF5ceTx0UBShxjsH6f8oGKYe2c=
 github.com/apache/thrift v0.12.0/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
-github.com/argoproj/argo-cd v0.8.1-0.20200214002907-df2a3aa223bb h1:dgtpFoUjY9VkNrsZMLH+Ur+MimUSmtQ1SaDw6KH64XQ=
-github.com/argoproj/argo-cd v0.8.1-0.20200214002907-df2a3aa223bb/go.mod h1:UPOPiF6Y1y/oTL3X1KcuLbu7ljD7f4+SIaXvlowBmhE=
-github.com/argoproj/argo-cd/engine v0.0.0-20200214002907-df2a3aa223bb h1:QWkk6mgWqvpM1kZCFb+3OjwRiJ4eaaWMYW/2VrnUxKI=
-github.com/argoproj/argo-cd/engine v0.0.0-20200214002907-df2a3aa223bb/go.mod h1:o+1aYRCqhvmlWFXyw6Sp3zhxavrKETepkA2e1/sRbRg=
+github.com/argoproj/argo-cd v0.8.1-0.20200227223151-3cf5640c92f8 h1:3M4iVjC8njkRIQdDdFDGZkz+wlIyePIOib9ziCs1Mx4=
+github.com/argoproj/argo-cd v0.8.1-0.20200227223151-3cf5640c92f8/go.mod h1:UPOPiF6Y1y/oTL3X1KcuLbu7ljD7f4+SIaXvlowBmhE=
+github.com/argoproj/argo-cd/engine v0.0.0-20200227223151-3cf5640c92f8 h1:PsEx4HE4ovSVAUf1hP+Jdb7aSXmimfTnejQzDWGvbtE=
+github.com/argoproj/argo-cd/engine v0.0.0-20200227223151-3cf5640c92f8/go.mod h1:o+1aYRCqhvmlWFXyw6Sp3zhxavrKETepkA2e1/sRbRg=
 github.com/argoproj/pkg v0.0.0-20200102163130-2dd1f3f6b4de h1:i19Yd0ERYAHtR84jnB8vmTuizk2q4Qw4NuayfRja5/A=
 github.com/argoproj/pkg v0.0.0-20200102163130-2dd1f3f6b4de/go.mod h1:2EZ44RG/CcgtPTwrRR0apOc7oU6UIw8GjCUJWZ8X3bM=
 github.com/armon/circbuf v0.0.0-20150827004946-bbbad097214e/go.mod h1:3U/XgcO3hCbHZ8TKRvWD2dDTCfh9M9ya+I9JpbB7O8o=

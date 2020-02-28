@@ -17,8 +17,8 @@ replace (
 
 // to be removed after https://github.com/argoproj/argo-cd/pull/3066 is merged
 replace (
-	github.com/argoproj/argo-cd => github.com/argoproj/argo-cd v0.8.1-0.20200214002907-df2a3aa223bb // gitops-engine branch
-	github.com/argoproj/argo-cd/engine => github.com/argoproj/argo-cd/engine v0.0.0-20200214002907-df2a3aa223bb // gitops-engine branch
+	github.com/argoproj/argo-cd => github.com/argoproj/argo-cd v0.8.1-0.20200227223151-3cf5640c92f8 // gitops-engine branch
+	github.com/argoproj/argo-cd/engine => github.com/argoproj/argo-cd/engine v0.0.0-20200227223151-3cf5640c92f8 // gitops-engine branch
 )
 
 // Pin kubernetes dependencies to 1.16.2
