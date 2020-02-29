@@ -17,9 +17,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/ryanuber/go-glob"
 	"gopkg.in/yaml.v2"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -109,13 +109,15 @@ type Cluster struct {
 	syncErrors   map[resource.ID]error
 	muSyncErrors sync.RWMutex
 
-	allowedNamespaces []string
-	loggedAllowedNS   map[string]bool // to keep track of whether we've logged a problem with seeing an allowed namespace
+	allowedNamespaces map[string]struct{}
 
 	imageExcludeList []string
 
-	workloadsLock sync.Mutex
+	workloadsLock sync.RWMutex
 	workloadsById map[resource.ID]workload
+
+	allowedAndExistingNamespacesLock   sync.RWMutex
+	allowedAndExistingNamespacesByName map[string]v1.Namespace
 }
 
 type resourceFilter struct {
@@ -140,18 +142,23 @@ func NewCluster(config *rest.Config, defaultNamespace string, client ExtendedCli
 	}
 
 	cacheSettings := cache.Settings{ResourcesFilter: &resourceFilter{exclude: exclude}}
+	// TODO: shouldn't the cache and engine have a Stop() method
 	clusterCache := cache.NewClusterCache(cacheSettings, config, allowedNamespaces, &kube.KubectlCmd{})
+	allowedNamespacesSet := map[string]struct{}{}
+	for _, nsName := range allowedNamespaces {
+		allowedNamespacesSet[nsName] = struct{}{}
+	}
 	c := &Cluster{
-		fallbackNamespace: fallbackNamespace,
-		engine:            engine.NewEngine(config, clusterCache),
-		clusterCache:      clusterCache,
-		client:            client,
-		logger:            logger,
-		sshKeyRing:        sshKeyRing,
-		allowedNamespaces: allowedNamespaces,
-		loggedAllowedNS:   map[string]bool{},
-		imageExcludeList:  imageExcludeList,
-		workloadsById:     map[resource.ID]workload{},
+		fallbackNamespace:                  fallbackNamespace,
+		engine:                             engine.NewEngine(config, clusterCache),
+		clusterCache:                       clusterCache,
+		client:                             client,
+		logger:                             logger,
+		sshKeyRing:                         sshKeyRing,
+		allowedNamespaces:                  allowedNamespacesSet,
+		imageExcludeList:                   imageExcludeList,
+		workloadsById:                      map[resource.ID]workload{},
+		allowedAndExistingNamespacesByName: map[string]v1.Namespace{},
 	}
 	clusterCache.SetPopulateResourceInfoHandler(func(un *unstructured.Unstructured, isRoot bool) (info interface{}, cacheManifest bool) {
 		c.OnResourceUpdated(un)
@@ -181,21 +188,47 @@ func (c *Cluster) Run() (io.Closer, error) {
 }
 
 func (c *Cluster) OnResourceRemoved(key kube.ResourceKey) {
+	// remove workload
 	c.workloadsLock.Lock()
 	defer c.workloadsLock.Unlock()
 	delete(c.workloadsById, resource.MakeID(key.Namespace, key.Kind, key.Name))
+
+	// remove namespace
+	if key.Kind == "Namespace" && key.Group == "" {
+		c.allowedAndExistingNamespacesLock.Lock()
+		delete(c.allowedAndExistingNamespacesByName, key.Name)
+		c.allowedAndExistingNamespacesLock.Unlock()
+	}
 }
 
 func (c *Cluster) OnResourceUpdated(un *unstructured.Unstructured) {
 	id := resource.MakeID(un.GetNamespace(), un.GetKind(), un.GetName())
+
+	// Update workload
 	if kind, ok := resourceKinds[strings.ToLower(un.GetKind())]; ok {
 		c.workloadsLock.Lock()
 		defer c.workloadsLock.Unlock()
 		w, err := kind.getWorkload(un)
 		if err != nil {
-			c.logger.Log("Unable to get workflow for kind", un.GetKind(), err)
+			c.logger.Log("msg", "unable to get workflow", "kind", un.GetKind(), "err", err)
+		} else {
+			c.workloadsById[id] = w
 		}
-		c.workloadsById[id] = w
+	}
+
+	// Update namespace
+	namespace := v1.Namespace{}
+	if un.GetKind() == "Namespace" && un.GroupVersionKind().Group == "" {
+		if _, ok := c.allowedNamespaces[un.GetName()]; len(c.allowedNamespaces) == 0 || ok {
+			err := runtime.DefaultUnstructuredConverter.FromUnstructured(un.Object, &namespace)
+			if err != nil {
+				c.logger.Log("msg", "unable to convert namespace", "err", err)
+			} else {
+				c.allowedAndExistingNamespacesLock.Lock()
+				c.allowedAndExistingNamespacesByName[namespace.Name] = namespace
+				c.allowedAndExistingNamespacesLock.Unlock()
+			}
+		}
 	}
 }
 
@@ -203,8 +236,8 @@ func (c *Cluster) OnResourceUpdated(un *unstructured.Unstructured) {
 // exist in the cluster or aren't in an allowed namespace.
 // They do not necessarily have to be returned in the order requested.
 func (c *Cluster) SomeWorkloads(_ context.Context, ids []resource.ID) (res []cluster.Workload, err error) {
-	c.workloadsLock.Lock()
-	defer c.workloadsLock.Unlock()
+	c.workloadsLock.RLock()
+	defer c.workloadsLock.RUnlock()
 
 	var workloads []cluster.Workload
 	for _, id := range ids {
@@ -227,28 +260,15 @@ func (c *Cluster) SomeWorkloads(_ context.Context, ids []resource.ID) (res []clu
 	return workloads, nil
 }
 
-func (c *Cluster) allWorkfloads(ctx context.Context, namespace string) (map[resource.ID]workload, error) {
+func (c *Cluster) allWorkloads(namespace string) (map[resource.ID]workload, error) {
 	if namespace != "" {
-		namespaces, err := c.getAllowedAndExistingNamespaces(ctx)
-		if err != nil {
-			return nil, errors.Wrap(err, "getting namespaces")
-		}
-		found := false
-
-		for _, ns := range namespaces {
-			if ns == "" || ns == namespace {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, ok := c.getAllowedAndExistingNamespaces()[namespace]; !ok {
 			return map[resource.ID]workload{}, nil
 		}
-
 	}
 
-	c.workloadsLock.Lock()
-	defer c.workloadsLock.Unlock()
+	c.workloadsLock.RLock()
+	defer c.workloadsLock.RUnlock()
 
 	allworkloads := map[resource.ID]workload{}
 	for id, workload := range c.workloadsById {
@@ -262,7 +282,7 @@ func (c *Cluster) allWorkfloads(ctx context.Context, namespace string) (map[reso
 // AllWorkloads returns all workloads in allowed namespaces matching the criteria; that is, in
 // the namespace (or any namespace if that argument is empty)
 func (c *Cluster) AllWorkloads(ctx context.Context, namespace string) ([]cluster.Workload, error) {
-	workloads, err := c.allWorkfloads(ctx, namespace)
+	workloads, err := c.allWorkloads(namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -287,29 +307,22 @@ func (c *Cluster) Ping() error {
 func (c *Cluster) Export(ctx context.Context) ([]byte, error) {
 	var config bytes.Buffer
 
-	namespaces, err := c.getAllowedAndExistingNamespaces(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "getting namespaces")
-	}
+	namespacesByName := c.getAllowedAndExistingNamespaces()
 
 	encoder := yaml.NewEncoder(&config)
 	defer encoder.Close()
 
-	for _, ns := range namespaces {
-		namespace, err := c.client.CoreV1().Namespaces().Get(ns, meta_v1.GetOptions{})
-		if err != nil {
-			return nil, err
-		}
+	for _, namespace := range namespacesByName {
 
 		// kind & apiVersion must be set, since TypeMeta is not populated
 		namespace.Kind = "Namespace"
 		namespace.APIVersion = "v1"
 
-		err = encoder.Encode(yamlThroughJSON{namespace})
+		err := encoder.Encode(yamlThroughJSON{namespace})
 		if err != nil {
 			return nil, errors.Wrap(err, "marshalling namespace to YAML")
 		}
-		workloads, err := c.allWorkfloads(ctx, ns)
+		workloads, err := c.allWorkloads(namespace.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -337,35 +350,14 @@ func (c *Cluster) PublicSSHKey(regenerate bool) (ssh.PublicKey, error) {
 // the Flux instance is expected to have access to and can look for resources inside of.
 // It returns a list of all namespaces unless an explicit list of allowed namespaces
 // has been set on the Cluster instance.
-func (c *Cluster) getAllowedAndExistingNamespaces(ctx context.Context) ([]string, error) {
-	if len(c.allowedNamespaces) > 0 {
-		nsList := []string{}
-		for _, name := range c.allowedNamespaces {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			ns, err := c.client.CoreV1().Namespaces().Get(name, meta_v1.GetOptions{})
-			switch {
-			case err == nil:
-				c.loggedAllowedNS[name] = false // reset, so if the namespace goes away we'll log it again
-				nsList = append(nsList, ns.Name)
-			case apierrors.IsUnauthorized(err) || apierrors.IsForbidden(err) || apierrors.IsNotFound(err):
-				if !c.loggedAllowedNS[name] {
-					c.logger.Log("warning", "cannot access allowed namespace",
-						"namespace", name, "err", err)
-					c.loggedAllowedNS[name] = true
-				}
-			default:
-				return nil, err
-			}
-		}
-		return nsList, nil
+func (c *Cluster) getAllowedAndExistingNamespaces() map[string]v1.Namespace {
+	result := map[string]v1.Namespace{}
+	c.allowedAndExistingNamespacesLock.RLock()
+	defer c.allowedAndExistingNamespacesLock.RUnlock()
+	for name, ns := range c.allowedAndExistingNamespacesByName {
+		result[name] = ns
 	}
-
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return []string{meta_v1.NamespaceAll}, nil
+	return result
 }
 
 func (c *Cluster) IsAllowedResource(id resource.ID) bool {
@@ -386,12 +378,8 @@ func (c *Cluster) IsAllowedResource(id resource.ID) bool {
 		namespaceToCheck = name
 	}
 
-	for _, allowedNS := range c.allowedNamespaces {
-		if namespaceToCheck == allowedNS {
-			return true
-		}
-	}
-	return false
+	_, ok := c.allowedNamespaces[namespaceToCheck]
+	return ok
 }
 
 type yamlThroughJSON struct {
