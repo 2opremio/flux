@@ -473,6 +473,7 @@ func main() {
 
 		logger.Log("host", restClientConfig.Host, "version", clusterVersion)
 
+		// FIXME: This is currently not honored by the GitOps Engine
 		kubectl := *kubernetesKubectl
 		if kubectl == "" {
 			kubectl, err = exec.LookPath("kubectl")
