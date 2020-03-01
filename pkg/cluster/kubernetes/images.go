@@ -71,7 +71,8 @@ func mergeCredentials(log func(...interface{}) error,
 			creds.Merge(seen)
 			continue
 		}
-
+		// TODO: this, and the service account request above, are the only remaining direct accesses to the API server.
+		//       We should probably cache service-account imagePullSecrets like we do with namespaces.
 		secret, err := client.CoreV1().Secrets(namespace).Get(name, meta_v1.GetOptions{})
 		if err != nil {
 			log("err", errors.Wrapf(err, "getting secret %q from namespace %q", name, namespace))
